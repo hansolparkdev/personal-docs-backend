@@ -9,7 +9,7 @@ pydantic-settings==2.6.1
 sqlalchemy[asyncio]==2.0.36
 asyncpg==0.30.0
 alembic==1.14.0
-pgvector==0.3.6
+pgvector>=0.2.5,<0.3.0
 
 # MinIO
 minio==7.2.11

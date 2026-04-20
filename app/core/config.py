@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     keycloak_url: str = "http://localhost:8080"
     keycloak_realm: str = "personal-docs"
     keycloak_client_id: str = "backend"
+    keycloak_client_secret: str = ""
 
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
