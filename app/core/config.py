@@ -19,10 +19,22 @@ class Settings(BaseSettings):
     keycloak_realm: str = "personal-docs"
     keycloak_client_id: str = "backend"
     keycloak_client_secret: str = ""
+    keycloak_jwks_cache_ttl: int = 600
+    keycloak_admin_client_id: str = "backend"
 
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     embedding_model: str = "text-embedding-3-small"
+
+    max_upload_size_bytes: int = 52428800  # 50MB
+    allowed_mime_types: list[str] = [
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/markdown",
+        "text/plain",
+    ]
 
 
 settings = Settings()

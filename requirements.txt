@@ -4,6 +4,7 @@ uvicorn[standard]==0.32.1
 
 # Settings
 pydantic-settings==2.6.1
+pydantic[email]>=2.0.0
 
 # Database
 sqlalchemy[asyncio]==2.0.36
@@ -25,9 +26,8 @@ langchain-openai==0.2.11
 langgraph==0.2.56
 langchain-postgres==0.0.12
 
-# File parsing
-pypdf==5.1.0
-python-docx==1.1.2
+# File parsing (Python 3.10+ required for markitdown)
+markitdown[all]==0.1.1
 python-multipart==0.0.18
 
 # Test
