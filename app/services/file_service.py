@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.models.file import File, IndexStatus
 from app.db.models.file_chunk import FileChunk
+from app.utils.file_parser import UnsupportedFormatError, parse_to_pages
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +71,6 @@ async def index_file(db: AsyncSession, file_id: uuid.UUID) -> None:
     from langchain.text_splitter import RecursiveCharacterTextSplitter
     from langchain_openai import OpenAIEmbeddings
 
-    from app.utils.file_parser import UnsupportedFormatError, parse_to_markdown
-
     result = await db.execute(select(File).where(File.id == file_id))
     db_file = result.scalar_one_or_none()
     if db_file is None:
@@ -94,7 +93,7 @@ async def index_file(db: AsyncSession, file_id: uuid.UUID) -> None:
         return
 
     try:
-        markdown_text = parse_to_markdown(raw_bytes, db_file.filename)
+        pages = parse_to_pages(raw_bytes, db_file.filename)
     except UnsupportedFormatError:
         db_file.index_status = IndexStatus.unsupported
         await db.commit()
@@ -107,27 +106,39 @@ async def index_file(db: AsyncSession, file_id: uuid.UUID) -> None:
 
     try:
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        chunks = splitter.split_text(markdown_text)
 
+        # Build chunk list with page_number, collecting all texts first for batch embedding
+        chunks_to_insert: list[FileChunk] = []
+        global_chunk_index = 0
+        for page_num, page_text in pages:
+            text_chunks = splitter.split_text(page_text)
+            for chunk_text in text_chunks:
+                chunks_to_insert.append(
+                    FileChunk(
+                        file_id=file_id,
+                        user_id=db_file.user_id,
+                        chunk_index=global_chunk_index,
+                        content=chunk_text,
+                        embedding=None,
+                        page_number=page_num,
+                    )
+                )
+                global_chunk_index += 1
+
+        # Batch embed all chunks at once
         embeddings_model = OpenAIEmbeddings(
             model=settings.embedding_model,
             openai_api_key=settings.openai_api_key,
         )
-        vectors = await embeddings_model.aembed_documents(chunks)
-
-        for idx, (chunk_text, vector) in enumerate(zip(chunks, vectors)):
-            chunk = FileChunk(
-                file_id=file_id,
-                user_id=db_file.user_id,
-                chunk_index=idx,
-                content=chunk_text,
-                embedding=vector,
-            )
+        all_texts = [chunk.content for chunk in chunks_to_insert]
+        embeddings = await embeddings_model.aembed_documents(all_texts)
+        for i, chunk in enumerate(chunks_to_insert):
+            chunk.embedding = embeddings[i]
             db.add(chunk)
 
         db_file.index_status = IndexStatus.indexed
         await db.commit()
-        logger.info("index_file: indexed %d chunks for file %s", len(chunks), file_id)
+        logger.info("index_file: indexed %d chunks for file %s", len(chunks_to_insert), file_id)
     except Exception as exc:
         logger.error("index_file: embedding/save failed for %s: %s", file_id, exc)
         db_file.index_status = IndexStatus.failed

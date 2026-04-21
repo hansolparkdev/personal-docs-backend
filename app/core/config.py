@@ -33,7 +33,9 @@ class Settings(BaseSettings):
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "text/markdown",
+        "text/x-markdown",
         "text/plain",
+        "application/octet-stream",  # 브라우저가 MIME 감지 실패 시
     ]
 
 

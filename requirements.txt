@@ -28,6 +28,7 @@ langchain-postgres==0.0.12
 
 # File parsing (Python 3.10+ required for markitdown)
 markitdown[all]==0.1.1
+pypdf>=4.0.0
 python-multipart==0.0.18
 
 # Test
