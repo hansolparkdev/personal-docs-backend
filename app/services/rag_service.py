@@ -2,23 +2,24 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid as _uuid
 from typing import AsyncGenerator
 
-import numpy as np
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pydantic import SecretStr
 
 from app.core.config import settings
+from app.services.chat_service import (
+    get_recent_messages,
+    get_session,
+    save_assistant_message,
+    save_user_message,
+    set_session_title,
+)
+from app.services.file_service import get_file, search_similar_chunks
 
 logger = logging.getLogger(__name__)
-
-
-def _cosine_sim(a: list, b: list) -> float:
-    arr_a = np.array(a, dtype=float)
-    arr_b = np.array(b, dtype=float)
-    denom = np.linalg.norm(arr_a) * np.linalg.norm(arr_b) + 1e-10
-    return float(np.dot(arr_a, arr_b) / denom)
 
 
 async def stream_rag_response(
@@ -28,61 +29,60 @@ async def stream_rag_response(
     query: str,
 ) -> AsyncGenerator[str, None]:
     """Yield SSE events: token* → sources → done (or error)."""
-    from app.services.chat_service import (
-        get_recent_messages,
-        get_session,
-        save_assistant_message,
-        save_user_message,
-        set_session_title,
-    )
-    from app.services.file_service import get_indexed_chunks, get_file
-    import uuid as _uuid
 
     # 1. 세션 제목 설정 (첫 메시지일 때)
     session = await get_session(db, session_id, user_id)
     if session and not session.title:
         await set_session_title(db, session_id, query[:20])
 
-    # 2. user 메시지 저장
-    await save_user_message(db, session_id, user_id, query)
-
-    # 3. 색인 청크 조회 (user_id 필터 포함 — get_indexed_chunks 내부에서 강제)
-    chunks = await get_indexed_chunks(db, user_id)
-
-    # 4. 색인 없음 처리
-    if not chunks:
-        fallback = "참고할 문서가 없습니다. 파일을 업로드하고 색인을 완료해 주세요."
-        yield f"event: token\ndata: {json.dumps({'text': fallback}, ensure_ascii=False)}\n\n"
-        yield f"event: sources\ndata: {json.dumps({'sources': []}, ensure_ascii=False)}\n\n"
-        yield "event: done\ndata: {}\n\n"
-        await save_assistant_message(db, session_id, user_id, fallback, [])
-        return
-
-    # 5. 히스토리 로드
+    # 2. 히스토리 로드 (user 메시지 저장 전에 조회해야 중복 없음)
     messages = await get_recent_messages(db, session_id, limit=20)
 
-    # 6. pgvector 유사도 검색 (K=5, user_id 필터는 get_indexed_chunks에서 이미 적용)
+    # 3. query embedding 생성
     api_key = SecretStr(settings.openai_api_key)
     embeddings_model = OpenAIEmbeddings(
         model=settings.embedding_model,
         api_key=api_key,
     )
-    query_embedding = await embeddings_model.aembed_query(query)
 
-    scored = []
-    for chunk in chunks:
-        if chunk.embedding is not None:
-            sim = _cosine_sim(query_embedding, chunk.embedding)
-            scored.append((sim, chunk))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    top_chunks = [c for _, c in scored[:5]]
+    # 검색 쿼리: 짧거나 맥락 의존 질문일 때만 직전 유저 질문을 앞에 붙임
+    # LLM에 전달하는 히스토리와는 별개로 검색에만 사용
+    _CONTINUATION_PATTERNS = ["더 말해", "계속", "이어서", "추가로"]
+    _is_continuation = any(p in query for p in _CONTINUATION_PATTERNS)
 
-    # 7. 컨텍스트 구성
+    search_query = query
+    if _is_continuation and messages:
+        last_user_msg = next((m for m in reversed(messages) if m.role == "user"), None)
+        if last_user_msg and last_user_msg.content.strip() != query.strip():
+            search_query = f"{last_user_msg.content} {query}"
+            logger.info("RAG search_query augmented: %r", search_query[:80])
+
+    query_embedding = await embeddings_model.aembed_query(search_query)
+
+    # 4. pgvector 코사인 거리 기반 유사도 검색 (deleted_at IS NULL 필터 포함)
+    chunk_results = await search_similar_chunks(db, user_id, query_embedding, limit=5)
+    for chunk, dist in chunk_results:
+        logger.info("RAG chunk: file_id=%s, chunk_index=%d, distance=%.4f, content_preview=%r",
+                    chunk.file_id, chunk.chunk_index, dist, chunk.content[:50])
+    top_chunks = [chunk for chunk, _ in chunk_results]
+    distances = {chunk.id: dist for chunk, dist in chunk_results}
+
+    # 5. 색인 없음 처리
+    if not top_chunks:
+        fallback = "참고할 문서가 없습니다. 파일을 업로드하고 색인을 완료해 주세요."
+        yield f"event: token\ndata: {json.dumps({'text': fallback}, ensure_ascii=False)}\n\n"
+        yield f"event: sources\ndata: {json.dumps({'sources': []}, ensure_ascii=False)}\n\n"
+        yield "event: done\ndata: {}\n\n"
+        await save_user_message(db, session_id, user_id, query)
+        await save_assistant_message(db, session_id, user_id, fallback, [])
+        return
+
+    # 6. 컨텍스트 구성
     context = "\n\n".join(
         [f"[출처: {c.file_id}, 청크 {c.chunk_index}]\n{c.content}" for c in top_chunks]
     )
 
-    # 8. 히스토리 → LangChain 메시지 변환
+    # 7. 히스토리 → LangChain 메시지 변환 (현재 query 제외 — 히스토리는 과거 턴만)
     lc_messages = [SystemMessage(content=f"다음 문서를 참고하여 답변하세요:\n\n{context}")]
     for msg in messages:
         if msg.role == "user":
@@ -91,7 +91,7 @@ async def stream_rag_response(
             lc_messages.append(AIMessage(content=msg.content))
     lc_messages.append(HumanMessage(content=query))
 
-    # 9. LLM 스트리밍
+    # 8. LLM 스트리밍
     llm = ChatOpenAI(
         model=settings.openai_model,
         api_key=api_key,
@@ -106,27 +106,30 @@ async def stream_rag_response(
                 full_answer += text
                 yield f"event: token\ndata: {json.dumps({'text': text}, ensure_ascii=False)}\n\n"
 
-        # 10. sources 이벤트 — files 테이블에서 파일명 조회
+        # 9. sources 이벤트 — 같은 파일은 가장 유사한 청크 1개만 표시
         file_name_cache: dict[str, str] = {}
-        for c in top_chunks:
+        seen_files: set[str] = set()
+        sources = []
+        for c in top_chunks:  # top_chunks는 이미 distance 오름차순 정렬
             fid = str(c.file_id)
+            if fid in seen_files:
+                continue
+            seen_files.add(fid)
             if fid not in file_name_cache:
                 file_obj = await get_file(db, user_id, _uuid.UUID(fid))
                 file_name_cache[fid] = file_obj.filename if file_obj else ""
-
-        sources = [
-            {
-                "file_id": str(c.file_id),
-                "filename": file_name_cache.get(str(c.file_id), ""),
+            sources.append({
+                "file_id": fid,
+                "filename": file_name_cache[fid],
                 "chunk_index": c.chunk_index,
                 "page_number": c.page_number,
-            }
-            for c in top_chunks
-        ]
+                "distance": round(distances.get(c.id, 0), 4),
+            })
         yield f"event: sources\ndata: {json.dumps({'sources': sources}, ensure_ascii=False)}\n\n"
         yield "event: done\ndata: {}\n\n"
 
-        # 11. DB 저장
+        # 10. 스트리밍 완료 후 DB 저장 (save_user → save_ai 순서)
+        await save_user_message(db, session_id, user_id, query)
         await save_assistant_message(db, session_id, user_id, full_answer, sources)
 
     except Exception as exc:

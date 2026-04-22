@@ -1,7 +1,14 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
 from app.api.v1.router import router
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+)
 
 app = FastAPI(title="Personal Docs API", version="0.1.0")
 

@@ -321,13 +321,13 @@ async def test_rag_sources_include_page_number():
     mock_llm.astream = _fake_astream
 
     with (
-        patch("app.services.chat_service.get_session", new_callable=AsyncMock, return_value=session),
-        patch("app.services.chat_service.save_user_message", new_callable=AsyncMock),
-        patch("app.services.chat_service.set_session_title", new_callable=AsyncMock),
-        patch("app.services.file_service.get_indexed_chunks", new_callable=AsyncMock, return_value=[chunk]),
-        patch("app.services.chat_service.get_recent_messages", new_callable=AsyncMock, return_value=[]),
-        patch("app.services.file_service.get_file", new_callable=AsyncMock, return_value=mock_file),
-        patch("app.services.chat_service.save_assistant_message", new_callable=AsyncMock),
+        patch("app.services.rag_service.get_session", new=AsyncMock(return_value=session)),
+        patch("app.services.rag_service.save_user_message", new=AsyncMock()),
+        patch("app.services.rag_service.set_session_title", new=AsyncMock()),
+        patch("app.services.rag_service.search_similar_chunks", new=AsyncMock(return_value=[(chunk, 0.3)])),
+        patch("app.services.rag_service.get_recent_messages", new=AsyncMock(return_value=[])),
+        patch("app.services.rag_service.get_file", new=AsyncMock(return_value=mock_file)),
+        patch("app.services.rag_service.save_assistant_message", new=AsyncMock()),
         patch("app.services.rag_service.OpenAIEmbeddings", return_value=mock_embeddings_model),
         patch("app.services.rag_service.ChatOpenAI", return_value=mock_llm),
     ):

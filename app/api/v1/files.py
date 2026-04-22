@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 
 from fastapi import (
@@ -36,11 +37,12 @@ async def upload_file(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """Upload a file. Supported types and 50MB limit enforced."""
-    if file.content_type not in settings.allowed_mime_types:
+    """Upload a file. Supported extensions and 50MB limit enforced."""
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in settings.allowed_extensions:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Unsupported media type: {file.content_type}",
+            detail=f"Unsupported file type: '{ext}'. Allowed: {sorted(settings.allowed_extensions)}",
         )
 
     content = await file.read()

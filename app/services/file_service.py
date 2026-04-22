@@ -7,7 +7,8 @@ from datetime import timedelta
 
 from minio import Minio
 from minio.error import S3Error
-from sqlalchemy import select
+from sqlalchemy import Float, select
+from sqlalchemy.sql.expression import cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -70,6 +71,7 @@ async def index_file(db: AsyncSession, file_id: uuid.UUID) -> None:
     """Parse and embed file content as chunks (BackgroundTask)."""
     from langchain.text_splitter import RecursiveCharacterTextSplitter
     from langchain_openai import OpenAIEmbeddings
+    from pydantic import SecretStr
 
     result = await db.execute(select(File).where(File.id == file_id))
     db_file = result.scalar_one_or_none()
@@ -128,7 +130,7 @@ async def index_file(db: AsyncSession, file_id: uuid.UUID) -> None:
         # Batch embed all chunks at once
         embeddings_model = OpenAIEmbeddings(
             model=settings.embedding_model,
-            openai_api_key=settings.openai_api_key,
+            api_key=SecretStr(settings.openai_api_key),
         )
         all_texts = [chunk.content for chunk in chunks_to_insert]
         embeddings = await embeddings_model.aembed_documents(all_texts)
@@ -202,9 +204,37 @@ async def get_download_url(db: AsyncSession, user_id: str, file_id: uuid.UUID) -
     return url
 
 
-async def get_indexed_chunks(db: AsyncSession, user_id: str) -> list[FileChunk]:
-    """Return all embedded chunks belonging to user_id (RAG internal interface)."""
-    result = await db.execute(
-        select(FileChunk).where(FileChunk.user_id == user_id)
+async def search_similar_chunks(
+    db: AsyncSession,
+    user_id: str,
+    query_embedding: list[float],
+    limit: int = 5,
+    threshold: float | None = None,
+) -> list[tuple[FileChunk, float]]:
+    """Return top-k (FileChunk, distance) tuples using pgvector cosine distance.
+
+    Filters:
+    - FileChunk.file_id == File.id (JOIN)
+    - File.user_id == user_id
+    - File.deleted_at IS NULL
+    - cosine distance < threshold (기본값: settings.rag_similarity_threshold)
+    Orders by cosine distance ascending (most similar first).
+    """
+    from app.core.config import settings as _settings
+    distance_threshold = threshold if threshold is not None else _settings.rag_similarity_threshold
+
+    distance = cast(FileChunk.embedding.op("<=>")(query_embedding), Float).label("distance")
+    stmt = (
+        select(FileChunk, distance)
+        .join(File, FileChunk.file_id == File.id)
+        .where(
+            File.user_id == user_id,
+            File.deleted_at.is_(None),
+            FileChunk.embedding.isnot(None),
+            distance < distance_threshold,
+        )
+        .order_by(distance)
+        .limit(limit)
     )
-    return list(result.scalars().all())
+    result = await db.execute(stmt)
+    return [(row.FileChunk, row.distance) for row in result.all()]

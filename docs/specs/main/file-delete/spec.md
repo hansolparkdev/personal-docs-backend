@@ -49,3 +49,11 @@
 - **Given** user_id="user-A"가 file_id="abc" 파일을 소유하며, 이 파일의 청크가 pgvector에 색인되어 있다
 - **When** `DELETE /api/v1/files/abc`가 완료된 후 RAG 챗이 user-A의 indexed 청크를 조회한다
 - **Then** file_id="abc"에서 유래한 청크가 조회 결과에 포함되지 않는다
+
+#### Scenario 2: deleted_at 설정된 파일 청크가 검색에서 제외됨 (방어 필터)
+
+- **Given** `files` 테이블에 file_id="abc" 레코드가 존재하나 `deleted_at`이 현재 시각으로 설정되어 있다
+- **And** `file_chunks` 테이블에 file_id="abc" 청크가 존재한다
+- **When** RAG 챗에서 `search_similar_chunks(db, "user-A", query_embedding)` 호출
+- **Then** file_id="abc" 청크가 검색 결과에 포함되지 않는다
+- **And** `File.deleted_at IS NULL` 조건이 쿼리에 적용된다

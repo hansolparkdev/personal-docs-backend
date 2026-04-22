@@ -422,12 +422,17 @@ async def test_rag_stream_no_chunks_yields_fallback():
     db = AsyncMock()
     session = _make_session(session_id=SESSION_ID, title=None)
 
+    mock_embed = AsyncMock()
+    mock_embed.aembed_query = AsyncMock(return_value=[0.1] * 1536)
+
     with (
-        patch("app.services.chat_service.get_session", new_callable=AsyncMock, return_value=session),
-        patch("app.services.chat_service.save_user_message", new_callable=AsyncMock, return_value=_make_message()),
-        patch("app.services.chat_service.set_session_title", new_callable=AsyncMock),
-        patch("app.services.file_service.get_indexed_chunks", new_callable=AsyncMock, return_value=[]),
-        patch("app.services.chat_service.save_assistant_message", new_callable=AsyncMock),
+        patch("app.services.rag_service.get_session", new=AsyncMock(return_value=session)),
+        patch("app.services.rag_service.save_user_message", new=AsyncMock()),
+        patch("app.services.rag_service.set_session_title", new=AsyncMock()),
+        patch("app.services.rag_service.get_recent_messages", new=AsyncMock(return_value=[])),
+        patch("app.services.rag_service.search_similar_chunks", new=AsyncMock(return_value=[])),
+        patch("app.services.rag_service.save_assistant_message", new=AsyncMock()),
+        patch("app.services.rag_service.OpenAIEmbeddings", return_value=mock_embed),
     ):
         from app.services.rag_service import stream_rag_response
 

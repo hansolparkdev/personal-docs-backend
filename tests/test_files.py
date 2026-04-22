@@ -135,7 +135,7 @@ async def test_upload_file_success(authed_client):
 async def test_upload_unsupported_mime(authed_client):
     response = await authed_client.post(
         "/api/v1/files",
-        files={"file": ("image.png", io.BytesIO(b"png bytes"), "image/png")},
+        files={"file": ("malware.exe", io.BytesIO(b"exe bytes"), "application/octet-stream")},
     )
     assert response.status_code == 415
 

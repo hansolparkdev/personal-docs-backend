@@ -3,11 +3,18 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
 import tempfile
 
 from pypdf import PdfReader
 
 logger = logging.getLogger(__name__)
+
+# MarkItDown이 PPTX 슬라이드 번호를 삽입하는 패턴
+_SLIDE_NUMBER_RE = re.compile(r"<!--\s*Slide number:\s*(\d+)\s*-->")
+
+# 페이지 단위로 파싱 가능한 확장자
+_PAGE_AWARE_EXTENSIONS = {".pptx", ".ppt"}
 
 
 class UnsupportedFormatError(Exception):
@@ -17,21 +24,12 @@ class UnsupportedFormatError(Exception):
 def parse_to_pages(content: bytes, filename: str) -> list[tuple[int | None, str]]:
     """Parse file bytes into a list of (page_number, text) tuples.
 
-    For PDF files, returns one tuple per page with 1-based page numbers.
-    For non-PDF files, returns a single tuple with page_number=None using
-    MarkItDown for parsing.
-
-    Args:
-        content: Raw file bytes.
-        filename: Original filename (used to determine extension).
-
-    Returns:
-        List of (page_number, text) tuples. page_number is None for non-PDF.
-
-    Raises:
-        UnsupportedFormatError: If the file cannot be parsed or yields no text.
+    - PDF: pypdf로 페이지 단위 파싱 → (page_num, text)
+    - PPTX/PPT: MarkItDown 변환 후 슬라이드 번호 주석으로 분리 → (slide_num, text)
+    - 나머지: MarkItDown으로 전체 텍스트 → (None, text)
     """
     suffix = os.path.splitext(filename)[-1].lower()
+
     if suffix == ".pdf":
         try:
             reader = PdfReader(io.BytesIO(content))
@@ -47,9 +45,30 @@ def parse_to_pages(content: bytes, filename: str) -> list[tuple[int | None, str]
             raise
         except Exception as exc:
             raise UnsupportedFormatError(f"Failed to parse PDF {filename}: {exc}") from exc
-    else:
-        markdown_text = parse_to_markdown(content, filename)
-        return [(None, markdown_text)]
+
+    markdown_text = parse_to_markdown(content, filename)
+
+    if suffix in _PAGE_AWARE_EXTENSIONS:
+        pages = _split_by_slide_number(markdown_text)
+        if pages:
+            return pages
+
+    return [(None, markdown_text)]
+
+
+def _split_by_slide_number(markdown_text: str) -> list[tuple[int, str]]:
+    """MarkItDown PPTX 출력에서 슬라이드 번호 주석을 기준으로 분리."""
+    parts = _SLIDE_NUMBER_RE.split(markdown_text)
+    # split 결과: [앞부분, 슬라이드번호, 내용, 슬라이드번호, 내용, ...]
+    pages: list[tuple[int, str]] = []
+    i = 1
+    while i < len(parts) - 1:
+        slide_num = int(parts[i])
+        text = parts[i + 1].strip()
+        if text:
+            pages.append((slide_num, text))
+        i += 2
+    return pages
 
 
 def parse_to_markdown(content: bytes, filename: str) -> str:

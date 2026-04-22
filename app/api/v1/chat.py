@@ -71,8 +71,17 @@ async def send_message(
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
+    from app.db.base import AsyncSessionLocal
+
+    async def _stream_with_own_session():
+        async with AsyncSessionLocal() as stream_db:
+            async for event in stream_rag_response(
+                stream_db, session_id, current_user.auth_id, body.content
+            ):
+                yield event
+
     return StreamingResponse(
-        stream_rag_response(db, session_id, current_user.auth_id, body.content),
+        _stream_with_own_session(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

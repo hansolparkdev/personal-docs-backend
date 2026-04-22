@@ -26,17 +26,26 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     embedding_model: str = "text-embedding-3-small"
 
+    rag_similarity_threshold: float = 0.75  # 코사인 거리 임계값 (0에 가까울수록 유사)
     max_upload_size_bytes: int = 52428800  # 50MB
-    allowed_mime_types: list[str] = [
-        "application/pdf",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "text/markdown",
-        "text/x-markdown",
-        "text/plain",
-        "application/octet-stream",  # 브라우저가 MIME 감지 실패 시
-    ]
+    allowed_extensions: set[str] = {
+        # 문서
+        ".pdf", ".docx", ".doc", ".rtf", ".odt",
+        # 프레젠테이션
+        ".pptx", ".ppt",
+        # 스프레드시트
+        ".xlsx", ".xls", ".csv",
+        # 텍스트
+        ".txt", ".md", ".markdown",
+        # 웹
+        ".html", ".htm",
+        # 이메일
+        ".eml", ".msg",
+        # 코드/데이터
+        ".json", ".xml", ".yaml", ".yml",
+        # 이미지 (MarkItDown OCR 지원)
+        ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp",
+    }
 
 
 settings = Settings()
