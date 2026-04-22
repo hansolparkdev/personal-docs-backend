@@ -113,6 +113,8 @@ async def index_file(db: AsyncSession, file_id: uuid.UUID) -> None:
         chunks_to_insert: list[FileChunk] = []
         global_chunk_index = 0
         for page_num, page_text in pages:
+            # PostgreSQL UTF8은 NULL 바이트(\x00) 허용 안 함 — 제거 후 저장
+            page_text = page_text.replace("\x00", " ")
             text_chunks = splitter.split_text(page_text)
             for chunk_text in text_chunks:
                 chunks_to_insert.append(

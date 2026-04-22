@@ -68,74 +68,22 @@ def _make_chunk(page_number: int | None = None):
 # ===========================================================================
 
 
-def test_parse_to_pages_pdf_returns_numbered_pages():
-    """PDF files: parse_to_pages returns list of (page_num, text) with ints."""
+def test_parse_to_pages_pdf_uses_markitdown():
+    """PDF files: parse_to_pages uses MarkItDown and returns [(None, text)]."""
     from app.utils.file_parser import parse_to_pages
 
-    # Build a minimal in-memory PDF with two pages using pypdf
-    from pypdf import PdfWriter
-
-    writer = PdfWriter()
-    for text in ["Page one content", "Page two content"]:
-        page = writer.add_blank_page(width=200, height=200)
-        # add_blank_page doesn't support text; we'll use mock instead
-    # Use mock approach to avoid needing a real PDF rendering engine
-    _ = writer  # writer created but we'll mock PdfReader
-
-    mock_page_1 = MagicMock()
-    mock_page_1.extract_text.return_value = "Page one content"
-    mock_page_2 = MagicMock()
-    mock_page_2.extract_text.return_value = "Page two content"
-
-    mock_reader = MagicMock()
-    mock_reader.pages = [mock_page_1, mock_page_2]
-
-    with patch("app.utils.file_parser.PdfReader", return_value=mock_reader):
+    with patch("app.utils.file_parser.parse_to_markdown", return_value="PDF 전체 텍스트"):
         result = parse_to_pages(b"fake_pdf_bytes", "document.pdf")
 
-    assert result == [(1, "Page one content"), (2, "Page two content")]
+    assert result == [(None, "PDF 전체 텍스트")]
 
 
-def test_parse_to_pages_pdf_skips_empty_pages():
-    """PDF pages with no extractable text are excluded from result."""
-    from app.utils.file_parser import parse_to_pages
-
-    mock_page_1 = MagicMock()
-    mock_page_1.extract_text.return_value = "Some text"
-    mock_page_2 = MagicMock()
-    mock_page_2.extract_text.return_value = ""  # empty page
-
-    mock_reader = MagicMock()
-    mock_reader.pages = [mock_page_1, mock_page_2]
-
-    with patch("app.utils.file_parser.PdfReader", return_value=mock_reader):
-        result = parse_to_pages(b"fake_pdf_bytes", "document.pdf")
-
-    # Only page 1 should appear; page 2 is skipped
-    assert result == [(1, "Some text")]
-
-
-def test_parse_to_pages_pdf_all_empty_raises():
-    """PDF with all empty pages raises UnsupportedFormatError."""
+def test_parse_to_pages_pdf_markitdown_fail_raises():
+    """PDF MarkItDown 파싱 실패 시 UnsupportedFormatError 발생."""
     from app.utils.file_parser import UnsupportedFormatError, parse_to_pages
 
-    mock_page = MagicMock()
-    mock_page.extract_text.return_value = "   "  # whitespace only
-
-    mock_reader = MagicMock()
-    mock_reader.pages = [mock_page]
-
-    with patch("app.utils.file_parser.PdfReader", return_value=mock_reader):
+    with patch("app.utils.file_parser.parse_to_markdown", side_effect=UnsupportedFormatError("fail")):
         with pytest.raises(UnsupportedFormatError):
-            parse_to_pages(b"fake_pdf_bytes", "empty.pdf")
-
-
-def test_parse_to_pages_pdf_reader_exception_raises():
-    """PdfReader raising exception propagates as UnsupportedFormatError."""
-    from app.utils.file_parser import UnsupportedFormatError, parse_to_pages
-
-    with patch("app.utils.file_parser.PdfReader", side_effect=Exception("corrupt")):
-        with pytest.raises(UnsupportedFormatError, match="corrupt"):
             parse_to_pages(b"bad bytes", "bad.pdf")
 
 
